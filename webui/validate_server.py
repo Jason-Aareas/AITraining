@@ -53,7 +53,7 @@ def _cleared_name(mesh_file: str) -> str:
     prev = None
     while stem != prev:
         prev = stem
-        stem = re.sub(r'_?\d+[xX]\d+$', '', stem)  # dimension suffix: _17x25 / 10X20
+        stem = re.sub(r'_?\d+([xX]\d+)+$', '', stem)  # dimension suffix: _17x25 / 10X20 / 30x30x30
         stem = re.sub(r'[_\d]+$', '', stem)          # trailing digits / underscores
     return stem
 
