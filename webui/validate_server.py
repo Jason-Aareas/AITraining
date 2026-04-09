@@ -49,7 +49,24 @@ def get_local_db() -> sqlite3.Connection:
 
 def _init_local_db():
     conn = get_local_db()
-    conn.execute("""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS scenes (
+            id          INTEGER PRIMARY KEY,
+            scene_name  TEXT NOT NULL,
+            staging_url TEXT NOT NULL,
+            imported_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS meshes (
+            scene_id     INTEGER NOT NULL,
+            mesh_file    TEXT    NOT NULL,
+            original_tag TEXT,
+            surface_name TEXT,
+            imported_at  TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (scene_id, mesh_file),
+            FOREIGN KEY (scene_id) REFERENCES scenes(id)
+        );
+
         CREATE TABLE IF NOT EXISTS tag_corrections (
             scene_id      INTEGER NOT NULL,
             mesh_file     TEXT    NOT NULL,
@@ -57,7 +74,10 @@ def _init_local_db():
             note          TEXT    DEFAULT '',
             updated_at    TEXT    DEFAULT (datetime('now')),
             PRIMARY KEY (scene_id, mesh_file)
-        )
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_meshes_scene ON meshes(scene_id);
+        CREATE INDEX IF NOT EXISTS idx_meshes_tag   ON meshes(original_tag);
     """)
     conn.commit()
     conn.close()
