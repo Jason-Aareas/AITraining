@@ -446,9 +446,12 @@ def batch_groups(q: str = ""):
     ).fetchall()
     ldb.close()
 
+    # Exclude: no tag assigned
+    rows = [r for r in rows if r['eff_tag']]
+
     # Exclude: cleared name is purely digits+"v" (e.g. "001v", "1v") with no tag
     _version_re = re.compile(r'^\d+[vV]$')
-    rows = [r for r in rows if not (_version_re.match(r['cname'] or '') and not r['eff_tag'])]
+    rows = [r for r in rows if not _version_re.match(r['cname'] or '')]
 
     # Exclude: cleared name contains "spline" — handled separately, not a mesh category
     rows = [r for r in rows if 'spline' not in (r['cname'] or '').lower()]
