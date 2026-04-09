@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>3D Scene Validator</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #1a1a1a; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+  header { background: #2a2a2a; padding: 10px 16px; border-bottom: 1px solid #444; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  header h1 { font-size: 15px; color: #90caf9; white-space: nowrap; }
+  select { background: #333; color: #e0e0e0; border: 1px solid #555; padding: 5px 8px; border-radius: 4px; font-size: 13px; min-width: 260px; }
+  button { background: #1565c0; color: #fff; border: none; padding: 5px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+  button:hover { background: #1976d2; }
+  button:disabled { background: #444; color: #888; cursor: default; }
+  #stats { font-size: 12px; color: #aaa; margin-left: auto; white-space: nowrap; }
+  #progress { font-size: 12px; color: #ffd54f; display: none; }
+  #error-bar { background: #5a1a1a; color: #ff8a80; padding: 5px 16px; font-size: 12px; display: none; }
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  #panel { width: 300px; min-width: 200px; background: #242424; border-right: 1px solid #444; display: flex; flex-direction: column; }
+  #panel-header { padding: 6px 12px; font-size: 11px; color: #777; border-bottom: 1px solid #333; }
+  #mesh-list { flex: 1; overflow-y: auto; }
+  .mesh-item {
+    padding: 6px 10px; cursor: pointer; border-bottom: 1px solid #2a2a2a;
+    display: grid; grid-template-columns: 10px 1fr auto; gap: 6px; align-items: center;
+    font-size: 11px;
+  }
+  .mesh-item:hover { background: #2f2f2f; }
+  .mesh-item.selected { background: #1e3a5f; }
+  .mesh-item.highlighted { background: #2d4a1e; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .dot.tagged   { background: #4caf50; }
+  .dot.untagged { background: #555; }
+  .dot.missing  { background: #f44336; }
+  .mesh-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #ccc; }
+  .mesh-tag  { font-size: 10px; color: #81c784; white-space: nowrap; }
+  .mesh-tag.empty { color: #444; }
+
+  #viewer { flex: 1; position: relative; background: #111; }
+  #canvas { display: block; width: 100%; height: 100%; }
+  #overlay {
+    position: absolute; top: 10px; left: 10px;
+    background: rgba(0,0,0,0.7); padding: 8px 12px; border-radius: 6px;
+    font-size: 12px; pointer-events: none; display: none; max-width: 280px;
+  }
+  #overlay .ov-name { color: #90caf9; font-weight: bold; word-break: break-all; }
+  #overlay .ov-tag  { color: #81c784; margin-top: 2px; }
+  #overlay .ov-info { color: #888; font-size: 11px; margin-top: 3px; }
+  #hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #444; font-size: 14px; pointer-events: none; text-align: center; }
+  #loading { position: absolute; bottom: 16px; right: 16px; background: rgba(0,0,0,0.7); color: #ffd54f; padding: 6px 12px; border-radius: 4px; display: none; font-size: 12px; }
+  #view-btns { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; }
+  #view-btns button { font-size: 11px; padding: 4px 10px; background: rgba(30,30,30,0.85); border: 1px solid #555; }
+  #view-btns button:hover { background: rgba(60,60,80,0.9); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>3D Scene Validator</h1>
+  <select id="scene-select"><option value="">Loading scenes...</option></select>
+  <button id="load-all-btn" disabled>Load All Meshes</button>
+  <span id="progress"></span>
+  <span id="stats"></span>
+</header>
+<div id="error-bar"></div>
+
+<div class="main">
+  <div id="panel">
+    <div id="panel-header">Meshes — click to highlight in scene</div>
+    <div id="mesh-list"><div style="padding:12px;color:#555;font-size:12px;">Select a scene above</div></div>
+  </div>
+  <div id="viewer">
+    <canvas id="canvas"></canvas>
+    <div id="hint">Select a scene → click "Load All Meshes" to see full scene</div>
+    <div id="overlay">
+      <div class="ov-name" id="ov-name"></div>
+      <div class="ov-tag"  id="ov-tag"></div>
+      <div class="ov-info" id="ov-info"></div>
+    </div>
+    <div id="loading">Loading...</div>
+    <div id="view-btns">
+      <button id="btn-fit">Fit All</button>
+      <button id="btn-top">Top View</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scene/mesh list loading -->
+<script>
+const sceneSelect  = document.getElementById('scene-select');
+const loadAllBtn   = document.getElementById('load-all-btn');
+const stats        = document.getElementById('stats');
+const progress     = document.getElementById('progress');
+const meshList     = document.getElementById('mesh-list');
+const errorBar     = document.getElementById('error-bar');
+const hint         = document.getElementById('hint');
+const overlay      = document.getElementById('overlay');
+const loadingEl    = document.getElementById('loading');
+
+let currentSceneId = null;
+let currentMeshes  = [];
+
+function showError(msg) { errorBar.textContent = msg; errorBar.style.display = 'block'; }
+function clearError()   { errorBar.style.display = 'none'; }
+
+// Load scene list
+fetch('/api/scenes')
+  .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  .then(scenes => {
+    sceneSelect.innerHTML = '<option value="">— Select a scene —</option>';
+    scenes.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.id; opt.textContent = s.name;
+      sceneSelect.appendChild(opt);
+    });
+  })
+  .catch(err => showError('Failed to load scenes: ' + err.message));
+
+sceneSelect.addEventListener('change', () => {
+  const id = sceneSelect.value;
+  if (!id) { loadAllBtn.disabled = true; return; }
+  currentSceneId = id;
+  meshList.innerHTML = '<div style="padding:12px;color:#888;font-size:12px;">Loading...</div>';
+  stats.textContent = '';
+  clearError();
+  if (window._clearScene) window._clearScene();
+  hint.style.display = 'block';
+  overlay.style.display = 'none';
+
+  fetch('/api/scene/' + id)
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(data => {
+      currentMeshes = data.meshes;
+      stats.textContent = data.tagged + ' / ' + data.total + ' tagged';
+      renderMeshList(data.meshes);
+      loadAllBtn.disabled = false;
+    })
+    .catch(err => showError('Failed to load scene: ' + err.message));
+});
+
+function renderMeshList(meshes) {
+  meshList.innerHTML = '';
+  meshes.forEach((m, i) => {
+    const div = document.createElement('div');
+    div.className = 'mesh-item';
+    div.dataset.index = i;
+    const dotClass = !m.file_exists ? 'missing' : m.has_tag ? 'tagged' : 'untagged';
+    div.innerHTML =
+      '<span class="dot ' + dotClass + '"></span>' +
+      '<span class="mesh-name" title="' + m.mesh_file + '">' + m.mesh_file + '</span>' +
+      '<span class="mesh-tag ' + (m.has_tag ? '' : 'empty') + '">' + (m.tag || '—') + '</span>';
+    div.addEventListener('click', () => onMeshClick(i, m));
+    meshList.appendChild(div);
+  });
+}
+
+function onMeshClick(idx, m) {
+  document.querySelectorAll('.mesh-item').forEach(el => el.classList.remove('selected'));
+  const el = document.querySelector('.mesh-item[data-index="' + idx + '"]');
+  if (el) { el.classList.add('selected'); el.scrollIntoView({ block: 'nearest' }); }
+  if (window._highlightMesh) window._highlightMesh(m.mesh_file);
+}
+
+loadAllBtn.addEventListener('click', () => {
+  if (!currentSceneId || !currentMeshes.length) return;
+  loadAllBtn.disabled = true;
+  if (window._clearScene) window._clearScene();
+  hint.style.display = 'none';
+  overlay.style.display = 'none';
+
+  const available = currentMeshes.filter(m => m.file_exists);
+  let loaded = 0;
+  progress.style.display = 'inline';
+  progress.textContent = '0 / ' + available.length;
+  loadingEl.style.display = 'block';
+  loadingEl.textContent = 'Loading 0 / ' + available.length + ' meshes...';
+
+  const batchSize = 8;
+  let queue = [...available];
+
+  function loadBatch() {
+    const batch = queue.splice(0, batchSize);
+    if (!batch.length) {
+      progress.style.display = 'none';
+      loadingEl.style.display = 'none';
+      loadAllBtn.disabled = false;
+      if (window._fitAll) window._fitAll();
+      return;
+    }
+    Promise.all(batch.map(m =>
+      fetch('/api/mesh/' + currentSceneId + '/' + encodeURIComponent(m.mesh_file))
+        .then(r => r.ok ? r.json() : null)
+        .then(data => data ? { data, meta: m } : null)
+        .catch(() => null)
+    )).then(results => {
+      results.forEach(r => { if (r && window._addMesh) window._addMesh(r.data, r.meta); });
+      loaded += batch.length;
+      progress.textContent = loaded + ' / ' + available.length;
+      loadingEl.textContent = 'Loading ' + loaded + ' / ' + available.length + ' meshes...';
+      loadBatch();
+    });
+  }
+  loadBatch();
+});
+
+document.getElementById('btn-fit').addEventListener('click',  () => { if (window._fitAll)  window._fitAll(); });
+document.getElementById('btn-top').addEventListener('click',  () => { if (window._topView) window._topView(); });
+</script>
+
+<!-- Three.js viewer -->
+<script type="module">
+import * as THREE from '/static/js/three.module.js';
+import { OrbitControls } from '/static/js/OrbitControls.js';
+
+const canvas   = document.getElementById('canvas');
+const viewer   = document.getElementById('viewer');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = false;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x111111);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100000);
+camera.position.set(0, 10, 20);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+sun.position.set(10, 20, 10);
+scene.add(sun);
+
+// Grid & axes
+const grid = new THREE.GridHelper(100, 40, 0x333333, 0x222222);
+scene.add(grid);
+scene.add(new THREE.AxesHelper(2));
+
+// Mesh storage: filename → { group, meta }
+const meshMap = {};
+let sceneGroup = new THREE.Group();
+scene.add(sceneGroup);
+
+// Tag → color map (deterministic from hash)
+function tagColor(tag) {
+  if (!tag) return 0x607d8b;
+  let h = 0;
+  for (let c of tag) h = (Math.imul(31, h) + c.charCodeAt(0)) | 0;
+  const hue = ((h >>> 0) % 360) / 360;
+  return new THREE.Color().setHSL(hue, 0.6, 0.45).getHex();
+}
+
+function resize() {
+  const w = viewer.clientWidth, h = viewer.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(viewer);
+resize();
+
+(function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+
+window._clearScene = function() {
+  Object.keys(meshMap).forEach(k => {
+    const g = meshMap[k].group;
+    sceneGroup.remove(g);
+    g.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+    delete meshMap[k];
+  });
+};
+
+window._addMesh = function(data, meta) {
+  if (!data.vertices || !data.vertices.length) return;
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(data.vertices.flat()), 3));
+  geo.setIndex(new THREE.BufferAttribute(new Uint32Array(data.faces.flat()), 1));
+  geo.computeVertexNormals();
+
+  const col = tagColor(meta.tag);
+  const solid = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+    color: col, side: THREE.DoubleSide, transparent: true, opacity: 0.82
+  }));
+  const wire = new THREE.LineSegments(
+    new THREE.WireframeGeometry(geo),
+    new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.12 })
+  );
+
+  const grp = new THREE.Group();
+  grp.add(solid, wire);
+  grp.userData = { meshFile: meta.mesh_file, tag: meta.tag, col };
+  sceneGroup.add(grp);
+  meshMap[meta.mesh_file] = { group: grp, meta };
+};
+
+window._highlightMesh = function(meshFile) {
+  // Reset all
+  Object.values(meshMap).forEach(({ group }) => {
+    group.children.forEach(c => {
+      if (c.isMesh) { c.material.emissive?.setHex(0); c.material.opacity = 0.82; }
+      if (c.isLineSegments) c.material.opacity = 0.12;
+    });
+  });
+
+  const entry = meshMap[meshFile];
+  if (!entry) return;
+  const grp = entry.group;
+
+  // Highlight
+  grp.children.forEach(c => {
+    if (c.isMesh) { c.material.emissive = new THREE.Color(0x224488); c.material.opacity = 1.0; }
+    if (c.isLineSegments) c.material.opacity = 0.5;
+  });
+
+  // Fit camera to this mesh
+  const box    = new THREE.Box3().setFromObject(grp);
+  const center = box.getCenter(new THREE.Vector3());
+  const size   = box.getSize(new THREE.Vector3()).length();
+  controls.target.copy(center);
+  const dist = Math.max(size * 2.0, 1.0);
+  camera.position.copy(center).addScaledVector(new THREE.Vector3(0.5, 0.7, 1).normalize(), dist);
+  camera.near = 0.001; camera.far = size * 500;
+  camera.updateProjectionMatrix();
+  controls.update();
+
+  // Show overlay
+  document.getElementById('ov-name').textContent = meshFile;
+  document.getElementById('ov-tag').textContent  = entry.meta.tag ? 'Tag: ' + entry.meta.tag : 'No tag assigned';
+  document.getElementById('ov-info').textContent = entry.meta.vertex_count
+    ? entry.meta.vertex_count + ' vertices'
+    : '';
+  document.getElementById('overlay').style.display = 'block';
+};
+
+window._fitAll = function() {
+  if (!sceneGroup.children.length) return;
+  const box    = new THREE.Box3().setFromObject(sceneGroup);
+  const center = box.getCenter(new THREE.Vector3());
+  const size   = box.getSize(new THREE.Vector3()).length();
+  controls.target.copy(center);
+  camera.position.copy(center).addScaledVector(new THREE.Vector3(0.4, 0.6, 1).normalize(), size * 1.4);
+  camera.near = size * 0.0001; camera.far = size * 200;
+  camera.updateProjectionMatrix();
+  controls.update();
+};
+
+window._topView = function() {
+  if (!sceneGroup.children.length) return;
+  const box    = new THREE.Box3().setFromObject(sceneGroup);
+  const center = box.getCenter(new THREE.Vector3());
+  const size   = box.getSize(new THREE.Vector3()).length();
+  controls.target.copy(center);
+  camera.position.set(center.x, center.y + size * 1.2, center.z);
+  camera.near = size * 0.0001; camera.far = size * 200;
+  camera.updateProjectionMatrix();
+  controls.update();
+};
+</script>
+</body>
+</html>

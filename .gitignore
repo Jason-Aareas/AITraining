@@ -1,0 +1,18 @@
+# Environment
+.env
+
+# Data
+data/raw/
+checkpoints/
+runs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.venv/
+venv/
+*.egg-info/
+
+# Results
+results/
