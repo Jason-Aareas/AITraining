@@ -50,7 +50,7 @@ def _cleared_name(mesh_file: str) -> str:
     if not mesh_file:
         return ""
     stem = Path(mesh_file).stem
-    stem = re.sub(r'^\d+_', '', stem)   # strip leading number prefix: '1_CAB_BASE' -> 'CAB_BASE'
+    stem = re.sub(r'^(\d+_)+', '', stem)  # strip all leading number prefixes: '2_12_ExteriorWall' -> 'ExteriorWall'
     prev = None
     while stem != prev:
         prev = stem
