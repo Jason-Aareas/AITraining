@@ -381,7 +381,8 @@ function renderDropdown(filter) {
     ? allTags.filter(t => t.toLowerCase().includes(q))
     : allTags;
 
-  filtered.slice(0, 80).forEach(tag => {
+  const displayed = q ? filtered : filtered.slice(0, 100);
+  displayed.forEach(tag => {
     const div = document.createElement('div');
     div.className = 'tag-opt';
     div.textContent = tag;

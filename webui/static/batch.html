@@ -266,8 +266,8 @@ function openEdit(idx) {
       addOpt(dd, '↩ Reset to DB tag', 'reset', () => { selected = '__reset__'; input.value = '(reset)'; renderDD(''); });
     }
 
-    const hits = q ? allTags.filter(t => t.toLowerCase().includes(q)) : allTags;
-    hits.slice(0, 60).forEach(tag => {
+    const hits = q ? allTags.filter(t => t.toLowerCase().includes(q)) : allTags.slice(0, 100);
+    hits.forEach(tag => {
       addOpt(dd, tag, tag === selected ? 'active' : '', () => {
         selected = tag; input.value = tag; renderDD(tag);
       });
