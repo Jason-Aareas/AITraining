@@ -42,10 +42,12 @@ LOCAL_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _cleared_name(mesh_file: str) -> str:
-    """SQLite UDF: strip trailing digits + extension. 'Crown13.js' → 'Crown'."""
+    """SQLite UDF: strip trailing digits/underscores + extension.
+    'Crown13.js' → 'Crown', 'COUNTERTOP_0009_.js' → 'COUNTERTOP'
+    """
     if not mesh_file:
         return ""
-    return re.sub(r'\d+$', '', Path(mesh_file).stem)
+    return re.sub(r'[_\d]+$', '', Path(mesh_file).stem)
 
 
 def get_local_db() -> sqlite3.Connection:
