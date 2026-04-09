@@ -3,6 +3,7 @@
 
 # Data
 data/raw/
+data/training.db
 checkpoints/
 runs/
 

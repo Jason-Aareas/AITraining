@@ -17,40 +17,96 @@
   #error-bar { background: #5a1a1a; color: #ff8a80; padding: 5px 16px; font-size: 12px; display: none; }
   .main { display: flex; flex: 1; overflow: hidden; }
 
-  #panel { width: 300px; min-width: 200px; background: #242424; border-right: 1px solid #444; display: flex; flex-direction: column; }
+  #panel { width: 320px; min-width: 220px; background: #242424; border-right: 1px solid #444; display: flex; flex-direction: column; }
   #panel-header { padding: 6px 12px; font-size: 11px; color: #777; border-bottom: 1px solid #333; }
   #mesh-list { flex: 1; overflow-y: auto; }
   .mesh-item {
-    padding: 6px 10px; cursor: pointer; border-bottom: 1px solid #2a2a2a;
-    display: grid; grid-template-columns: 10px 1fr auto; gap: 6px; align-items: center;
+    padding: 5px 8px; cursor: pointer; border-bottom: 1px solid #2a2a2a;
+    display: grid; grid-template-columns: 10px 1fr auto auto; gap: 5px; align-items: center;
     font-size: 11px;
   }
   .mesh-item:hover { background: #2f2f2f; }
   .mesh-item.selected { background: #1e3a5f; }
-  .mesh-item.highlighted { background: #2d4a1e; }
   .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-  .dot.tagged   { background: #4caf50; }
-  .dot.untagged { background: #555; }
-  .dot.missing  { background: #f44336; }
+  .dot.tagged    { background: #4caf50; }
+  .dot.corrected { background: #ffc107; }
+  .dot.excluded  { background: #f44336; }
+  .dot.untagged  { background: #555; }
+  .dot.missing   { background: #f44336; }
   .mesh-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #ccc; }
-  .mesh-tag  { font-size: 10px; color: #81c784; white-space: nowrap; }
-  .mesh-tag.empty { color: #444; }
+  .mesh-name.excluded-name { text-decoration: line-through; color: #666; }
+  .mesh-tag  { font-size: 10px; color: #81c784; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px; }
+  .mesh-tag.empty      { color: #444; }
+  .mesh-tag.corrected  { color: #ffc107; }
+  .mesh-tag.excluded   { color: #f44336; font-style: italic; }
+  .edit-btn {
+    background: none; border: 1px solid #444; color: #888; padding: 1px 5px;
+    border-radius: 3px; cursor: pointer; font-size: 10px; white-space: nowrap; flex-shrink: 0;
+  }
+  .edit-btn:hover { border-color: #90caf9; color: #90caf9; background: #1a2a3a; }
 
   #viewer { flex: 1; position: relative; background: #111; }
   #canvas { display: block; width: 100%; height: 100%; }
   #overlay {
     position: absolute; top: 10px; left: 10px;
     background: rgba(0,0,0,0.7); padding: 8px 12px; border-radius: 6px;
-    font-size: 12px; pointer-events: none; display: none; max-width: 280px;
+    font-size: 12px; pointer-events: none; display: none; max-width: 300px;
   }
   #overlay .ov-name { color: #90caf9; font-weight: bold; word-break: break-all; }
   #overlay .ov-tag  { color: #81c784; margin-top: 2px; }
+  #overlay .ov-orig { color: #888; font-size: 10px; margin-top: 1px; }
   #overlay .ov-info { color: #888; font-size: 11px; margin-top: 3px; }
   #hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #444; font-size: 14px; pointer-events: none; text-align: center; }
   #loading { position: absolute; bottom: 16px; right: 16px; background: rgba(0,0,0,0.7); color: #ffd54f; padding: 6px 12px; border-radius: 4px; display: none; font-size: 12px; }
   #view-btns { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; }
   #view-btns button { font-size: 11px; padding: 4px 10px; background: rgba(30,30,30,0.85); border: 1px solid #555; }
   #view-btns button:hover { background: rgba(60,60,80,0.9); }
+
+  /* ── Tag editor modal ── */
+  #tag-modal {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    z-index: 1000; align-items: center; justify-content: center;
+  }
+  #tag-modal.open { display: flex; }
+  #tag-modal-box {
+    background: #2a2a2a; border: 1px solid #555; border-radius: 8px;
+    padding: 18px 20px; width: 380px; max-width: 95vw;
+  }
+  #tag-modal-box h3 { font-size: 13px; color: #90caf9; margin-bottom: 10px; word-break: break-all; }
+  #tag-modal-box .modal-row { margin-bottom: 10px; }
+  #tag-modal-box label { font-size: 11px; color: #888; display: block; margin-bottom: 4px; }
+  #tag-modal-box .orig-tag { font-size: 12px; color: #aaa; padding: 4px 6px; background: #1a1a1a; border-radius: 4px; }
+  #tag-search {
+    width: 100%; background: #333; color: #e0e0e0; border: 1px solid #555;
+    padding: 6px 8px; border-radius: 4px; font-size: 12px; outline: none;
+  }
+  #tag-search:focus { border-color: #90caf9; }
+  #tag-dropdown {
+    max-height: 180px; overflow-y: auto; background: #1e1e1e;
+    border: 1px solid #444; border-radius: 4px; margin-top: 2px;
+  }
+  .tag-opt {
+    padding: 5px 8px; cursor: pointer; font-size: 12px;
+  }
+  .tag-opt:hover, .tag-opt.active { background: #1565c0; color: #fff; }
+  .tag-opt.special { color: #f44336; font-style: italic; }
+  .tag-opt.special:hover { background: #5a1a1a; }
+  .tag-opt.reset { color: #81c784; }
+  .tag-opt.reset:hover { background: #1a3a1a; }
+  #tag-note {
+    width: 100%; background: #333; color: #e0e0e0; border: 1px solid #555;
+    padding: 5px 8px; border-radius: 4px; font-size: 11px; resize: none; outline: none;
+  }
+  .modal-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .modal-btns button { font-size: 12px; padding: 5px 14px; }
+  .btn-cancel { background: #444; }
+  .btn-cancel:hover { background: #555; }
+  .btn-save { background: #1565c0; }
+
+  /* legend */
+  #legend { display: flex; gap: 12px; align-items: center; padding: 5px 12px; font-size: 10px; color: #666; border-bottom: 1px solid #333; flex-shrink: 0; }
+  .leg { display: flex; align-items: center; gap: 4px; }
+  .leg-dot { width: 7px; height: 7px; border-radius: 50%; }
 </style>
 </head>
 <body>
@@ -66,7 +122,13 @@
 
 <div class="main">
   <div id="panel">
-    <div id="panel-header">Meshes — click to highlight in scene</div>
+    <div id="legend">
+      <span class="leg"><span class="leg-dot" style="background:#4caf50"></span>Tagged</span>
+      <span class="leg"><span class="leg-dot" style="background:#ffc107"></span>Corrected</span>
+      <span class="leg"><span class="leg-dot" style="background:#f44336"></span>Excluded</span>
+      <span class="leg"><span class="leg-dot" style="background:#555"></span>No tag</span>
+    </div>
+    <div id="panel-header">Meshes — click to highlight · pencil to edit tag</div>
     <div id="mesh-list"><div style="padding:12px;color:#555;font-size:12px;">Select a scene above</div></div>
   </div>
   <div id="viewer">
@@ -75,6 +137,7 @@
     <div id="overlay">
       <div class="ov-name" id="ov-name"></div>
       <div class="ov-tag"  id="ov-tag"></div>
+      <div class="ov-orig" id="ov-orig"></div>
       <div class="ov-info" id="ov-info"></div>
     </div>
     <div id="loading">Loading...</div>
@@ -85,7 +148,30 @@
   </div>
 </div>
 
-<!-- Scene/mesh list loading -->
+<!-- Tag editor modal -->
+<div id="tag-modal">
+  <div id="tag-modal-box">
+    <h3 id="modal-mesh-name"></h3>
+    <div class="modal-row">
+      <label>Current tag (production DB)</label>
+      <div class="orig-tag" id="modal-orig-tag">—</div>
+    </div>
+    <div class="modal-row">
+      <label>New tag (type to search, or pick below)</label>
+      <input id="tag-search" type="text" placeholder="Search tags..." autocomplete="off">
+      <div id="tag-dropdown"></div>
+    </div>
+    <div class="modal-row">
+      <label>Note (optional)</label>
+      <textarea id="tag-note" rows="2" placeholder="Reason for correction..."></textarea>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-cancel" id="modal-cancel-btn">Cancel</button>
+      <button class="btn-save"   id="modal-save-btn">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const sceneSelect  = document.getElementById('scene-select');
 const loadAllBtn   = document.getElementById('load-all-btn');
@@ -99,22 +185,25 @@ const loadingEl    = document.getElementById('loading');
 
 let currentSceneId = null;
 let currentMeshes  = [];
+let allTags        = [];   // loaded once from /api/tags
+let editTarget     = null; // {idx, mesh} currently being edited
 
 function showError(msg) { errorBar.textContent = msg; errorBar.style.display = 'block'; }
 function clearError()   { errorBar.style.display = 'none'; }
 
-// Load scene list
-fetch('/api/scenes')
-  .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-  .then(scenes => {
-    sceneSelect.innerHTML = '<option value="">— Select a scene —</option>';
-    scenes.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s.id; opt.textContent = s.name;
-      sceneSelect.appendChild(opt);
-    });
-  })
-  .catch(err => showError('Failed to load scenes: ' + err.message));
+// Load scene list + tag list in parallel
+Promise.all([
+  fetch('/api/scenes').then(r => r.json()),
+  fetch('/api/tags').then(r => r.json()),
+]).then(([scenes, tags]) => {
+  sceneSelect.innerHTML = '<option value="">— Select a scene —</option>';
+  scenes.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id; opt.textContent = s.name;
+    sceneSelect.appendChild(opt);
+  });
+  allTags = tags;
+}).catch(err => showError('Failed to load: ' + err.message));
 
 sceneSelect.addEventListener('change', () => {
   const id = sceneSelect.value;
@@ -131,12 +220,30 @@ sceneSelect.addEventListener('change', () => {
     .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(data => {
       currentMeshes = data.meshes;
-      stats.textContent = data.tagged + ' / ' + data.total + ' tagged';
+      let s = data.tagged + ' / ' + data.total + ' tagged';
+      if (data.corrected) s += ' · ' + data.corrected + ' corrected';
+      if (data.excluded)  s += ' · ' + data.excluded  + ' excluded';
+      stats.textContent = s;
       renderMeshList(data.meshes);
       loadAllBtn.disabled = false;
     })
     .catch(err => showError('Failed to load scene: ' + err.message));
 });
+
+function dotClass(m) {
+  if (!m.file_exists) return 'missing';
+  if (m.excluded)     return 'excluded';
+  if (m.corrected)    return 'corrected';
+  if (m.has_tag)      return 'tagged';
+  return 'untagged';
+}
+
+function tagDisplay(m) {
+  if (m.excluded)  return { text: 'excluded', cls: 'excluded' };
+  if (m.corrected) return { text: m.tag || '—', cls: 'corrected' };
+  if (m.has_tag)   return { text: m.tag, cls: '' };
+  return { text: '—', cls: 'empty' };
+}
 
 function renderMeshList(meshes) {
   meshList.innerHTML = '';
@@ -144,12 +251,25 @@ function renderMeshList(meshes) {
     const div = document.createElement('div');
     div.className = 'mesh-item';
     div.dataset.index = i;
-    const dotClass = !m.file_exists ? 'missing' : m.has_tag ? 'tagged' : 'untagged';
+
+    const dc = dotClass(m);
+    const td = tagDisplay(m);
+    const nameClass = m.excluded ? 'mesh-name excluded-name' : 'mesh-name';
+
     div.innerHTML =
-      '<span class="dot ' + dotClass + '"></span>' +
-      '<span class="mesh-name" title="' + m.mesh_file + '">' + m.mesh_file + '</span>' +
-      '<span class="mesh-tag ' + (m.has_tag ? '' : 'empty') + '">' + (m.tag || '—') + '</span>';
-    div.addEventListener('click', () => onMeshClick(i, m));
+      '<span class="dot ' + dc + '"></span>' +
+      '<span class="' + nameClass + '" title="' + m.mesh_file + '">' + m.mesh_file + '</span>' +
+      '<span class="mesh-tag ' + td.cls + '">' + td.text + '</span>' +
+      '<button class="edit-btn" data-idx="' + i + '" title="Edit tag">&#9998;</button>';
+
+    div.addEventListener('click', (e) => {
+      if (e.target.classList.contains('edit-btn')) return;
+      onMeshClick(i, m);
+    });
+    div.querySelector('.edit-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openTagEditor(i, m);
+    });
     meshList.appendChild(div);
   });
 }
@@ -203,8 +323,121 @@ loadAllBtn.addEventListener('click', () => {
   loadBatch();
 });
 
-document.getElementById('btn-fit').addEventListener('click',  () => { if (window._fitAll)  window._fitAll(); });
-document.getElementById('btn-top').addEventListener('click',  () => { if (window._topView) window._topView(); });
+document.getElementById('btn-fit').addEventListener('click', () => { if (window._fitAll)  window._fitAll(); });
+document.getElementById('btn-top').addEventListener('click', () => { if (window._topView) window._topView(); });
+
+// ── Tag editor ────────────────────────────────────────────────────────────────
+const tagModal      = document.getElementById('tag-modal');
+const modalMeshName = document.getElementById('modal-mesh-name');
+const modalOrigTag  = document.getElementById('modal-orig-tag');
+const tagSearch     = document.getElementById('tag-search');
+const tagDropdown   = document.getElementById('tag-dropdown');
+const tagNote       = document.getElementById('tag-note');
+let selectedTag     = undefined;  // undefined = unchanged, null = exclude, string = new tag
+
+function openTagEditor(idx, m) {
+  editTarget  = { idx, mesh: m };
+  selectedTag = undefined;
+
+  modalMeshName.textContent = m.mesh_file;
+  modalOrigTag.textContent  = m.original_tag || '(none)';
+  tagSearch.value           = m.corrected ? (m.excluded ? '' : m.tag) : (m.tag || '');
+  tagNote.value             = '';
+
+  tagModal.classList.add('open');
+  renderDropdown(tagSearch.value);
+  tagSearch.focus();
+}
+
+function closeTagEditor() {
+  tagModal.classList.remove('open');
+  editTarget  = null;
+  selectedTag = undefined;
+}
+
+function renderDropdown(filter) {
+  const q = filter.trim().toLowerCase();
+  tagDropdown.innerHTML = '';
+
+  // Special options at top
+  if (!q || 'exclude'.startsWith(q) || 'remove'.startsWith(q)) {
+    const ex = document.createElement('div');
+    ex.className = 'tag-opt special';
+    ex.textContent = '— Exclude from training —';
+    ex.addEventListener('click', () => { selectedTag = null; tagSearch.value = ''; renderDropdown(''); highlightSelected(null); });
+    tagDropdown.appendChild(ex);
+  }
+
+  if (editTarget && editTarget.mesh.corrected) {
+    const rst = document.createElement('div');
+    rst.className = 'tag-opt reset';
+    rst.textContent = '↩ Reset to production DB tag';
+    rst.addEventListener('click', () => { selectedTag = '__reset__'; tagSearch.value = ''; renderDropdown(''); highlightSelected('__reset__'); });
+    tagDropdown.appendChild(rst);
+  }
+
+  const filtered = q
+    ? allTags.filter(t => t.toLowerCase().includes(q))
+    : allTags;
+
+  filtered.slice(0, 80).forEach(tag => {
+    const div = document.createElement('div');
+    div.className = 'tag-opt';
+    div.textContent = tag;
+    if (selectedTag === tag) div.classList.add('active');
+    div.addEventListener('click', () => { selectedTag = tag; tagSearch.value = tag; renderDropdown(tag); highlightSelected(tag); });
+    tagDropdown.appendChild(div);
+  });
+}
+
+function highlightSelected(val) {
+  tagDropdown.querySelectorAll('.tag-opt').forEach(el => {
+    el.classList.toggle('active',
+      (val === null && el.classList.contains('special')) ||
+      (val === '__reset__' && el.classList.contains('reset')) ||
+      el.textContent === val
+    );
+  });
+}
+
+tagSearch.addEventListener('input', () => { selectedTag = tagSearch.value || undefined; renderDropdown(tagSearch.value); });
+
+document.getElementById('modal-cancel-btn').addEventListener('click', closeTagEditor);
+tagModal.addEventListener('click', e => { if (e.target === tagModal) closeTagEditor(); });
+
+document.getElementById('modal-save-btn').addEventListener('click', async () => {
+  if (!editTarget || selectedTag === undefined) { closeTagEditor(); return; }
+
+  const { idx, mesh } = editTarget;
+  const sceneId   = currentSceneId;
+  const meshFile  = mesh.mesh_file;
+
+  if (selectedTag === '__reset__') {
+    // Delete correction → revert to production DB
+    await fetch('/api/correction/' + sceneId + '/' + encodeURIComponent(meshFile), { method: 'DELETE' });
+  } else {
+    // POST correction (null = exclude, string = new tag)
+    await fetch('/api/correction/' + sceneId + '/' + encodeURIComponent(meshFile), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ corrected_tag: selectedTag === null ? null : selectedTag, note: tagNote.value }),
+    });
+  }
+
+  closeTagEditor();
+
+  // Refresh scene data to update list + stats
+  fetch('/api/scene/' + sceneId)
+    .then(r => r.json())
+    .then(data => {
+      currentMeshes = data.meshes;
+      let s = data.tagged + ' / ' + data.total + ' tagged';
+      if (data.corrected) s += ' · ' + data.corrected + ' corrected';
+      if (data.excluded)  s += ' · ' + data.excluded  + ' excluded';
+      stats.textContent = s;
+      renderMeshList(data.meshes);
+    });
+});
 </script>
 
 <!-- Three.js viewer -->
@@ -228,23 +461,19 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 
-// Lights
 scene.add(new THREE.AmbientLight(0xffffff, 0.5));
 const sun = new THREE.DirectionalLight(0xffffff, 1.0);
 sun.position.set(10, 20, 10);
 scene.add(sun);
 
-// Grid & axes
 const grid = new THREE.GridHelper(100, 40, 0x333333, 0x222222);
 scene.add(grid);
 scene.add(new THREE.AxesHelper(2));
 
-// Mesh storage: filename → { group, meta }
 const meshMap = {};
 let sceneGroup = new THREE.Group();
 scene.add(sceneGroup);
 
-// Tag → color map (deterministic from hash)
 function tagColor(tag) {
   if (!tag) return 0x607d8b;
   let h = 0;
@@ -302,7 +531,6 @@ window._addMesh = function(data, meta) {
 };
 
 window._highlightMesh = function(meshFile) {
-  // Reset all
   Object.values(meshMap).forEach(({ group }) => {
     group.children.forEach(c => {
       if (c.isMesh) { c.material.emissive?.setHex(0); c.material.opacity = 0.82; }
@@ -314,13 +542,11 @@ window._highlightMesh = function(meshFile) {
   if (!entry) return;
   const grp = entry.group;
 
-  // Highlight
   grp.children.forEach(c => {
     if (c.isMesh) { c.material.emissive = new THREE.Color(0x224488); c.material.opacity = 1.0; }
     if (c.isLineSegments) c.material.opacity = 0.5;
   });
 
-  // Fit camera to this mesh
   const box    = new THREE.Box3().setFromObject(grp);
   const center = box.getCenter(new THREE.Vector3());
   const size   = box.getSize(new THREE.Vector3()).length();
@@ -331,12 +557,11 @@ window._highlightMesh = function(meshFile) {
   camera.updateProjectionMatrix();
   controls.update();
 
-  // Show overlay
+  const meta = entry.meta;
   document.getElementById('ov-name').textContent = meshFile;
-  document.getElementById('ov-tag').textContent  = entry.meta.tag ? 'Tag: ' + entry.meta.tag : 'No tag assigned';
-  document.getElementById('ov-info').textContent = entry.meta.vertex_count
-    ? entry.meta.vertex_count + ' vertices'
-    : '';
+  document.getElementById('ov-tag').textContent  = meta.excluded ? 'EXCLUDED' : (meta.tag ? 'Tag: ' + meta.tag : 'No tag assigned');
+  document.getElementById('ov-orig').textContent = meta.corrected ? 'Original: ' + (meta.original_tag || '(none)') : '';
+  document.getElementById('ov-info').textContent = meta.vertex_count ? meta.vertex_count + ' vertices' : '';
   document.getElementById('overlay').style.display = 'block';
 };
 

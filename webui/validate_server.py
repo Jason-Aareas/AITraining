@@ -1,14 +1,17 @@
 import json
 import os
 import re
+import sqlite3
 import struct
 from pathlib import Path
+from typing import Optional
 
 import pyodbc
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
@@ -33,6 +36,35 @@ def _build_pyodbc_conn() -> str:
 DB_CONN = _build_pyodbc_conn()
 STAGING_ROOT = os.getenv("STAGING_ROOT", "//192.168.100.44/Library/STAGING")
 
+# Local SQLite for tag corrections
+LOCAL_DB_PATH = Path(__file__).parent.parent / "data" / "training.db"
+LOCAL_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+def get_local_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(LOCAL_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_local_db():
+    conn = get_local_db()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tag_corrections (
+            scene_id      INTEGER NOT NULL,
+            mesh_file     TEXT    NOT NULL,
+            corrected_tag TEXT,
+            note          TEXT    DEFAULT '',
+            updated_at    TEXT    DEFAULT (datetime('now')),
+            PRIMARY KEY (scene_id, mesh_file)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+_init_local_db()
+
 app = FastAPI()
 
 
@@ -43,7 +75,6 @@ def get_conn():
 # ── Binary .js mesh parser ────────────────────────────────────────────────────
 
 def _scan_section(data: bytes, label: bytes, search_from: int) -> int:
-    """Return byte offset immediately after the label bytes, starting at search_from."""
     idx = data.find(label, search_from)
     if idx == -1:
         raise ValueError(f"Section {label!r} not found from offset {search_from}")
@@ -53,15 +84,11 @@ def _scan_section(data: bytes, label: bytes, search_from: int) -> int:
 def parse_mesh(data: bytes) -> dict:
     file_len = len(data)
 
-    # Detect version from end-of-file label
-    # AareasExportV2: 14 chars at [end-15..end-1]
-    # AareasExport:   12 chars at [end-13..end-1]
     if file_len >= 15 and data[file_len - 15:file_len - 1] == b"AareasExportV2":
         version = 2
     elif file_len >= 13 and data[file_len - 13:file_len - 1] == b"AareasExport\x00\x00":
         version = 1
     else:
-        # Try without strict null check
         tail = data[max(0, file_len - 20):]
         if b"AareasExportV2" in tail:
             version = 2
@@ -70,49 +97,20 @@ def parse_mesh(data: bytes) -> dict:
         else:
             raise ValueError("Not a valid Aareas mesh file (no version label)")
 
-    # ── Header (offset 0) ────────────────────────────────────────────────────
-    # int32 @ 0: verticesCount
-    # int32 @ 4: normalsCount
-    # int32 @ 12: uvsChannels
     uvs_channels = struct.unpack_from("<i", data, 12)[0]
-
-    # ── Transform matrix (offset 31, 16×float32 = 64 bytes) ─────────────────
     matrix = list(struct.unpack_from("<16f", data, 31))
-
-    # Scale: V2 uses matrix[0] as the unit scale; V1 uses 0.0254 (inches→metres)
     transform = matrix[0] if version == 2 else 0.0254
-
-    # Translation components from matrix (column-major 4×4):
-    #   matrix[12]=tx, matrix[13]=ty, matrix[14]=tz  (3ds Max Z-up space)
-    tx = matrix[12]
-    ty = matrix[13]
-    tz = matrix[14]
-
-    # ── Geometry section (offset 95) ─────────────────────────────────────────
-    # Layout inside geometry view:
-    #   "vertices\0" (9 bytes) | vertexCount(int32) | V×3 float32
-    #   "normals\0"  (8 bytes) | normalCount(int32) | N×3 float32
-    #   "colors\0"   (7 bytes) | colorCount(int32)  | C×3 float32
-    #   [for each UV channel]  | label(3 bytes) | count(int32) | data
-    #   "faces\0"    (6 bytes) | faceCount(int32)   | F×stride int32
+    m12, m13, m14 = matrix[12], matrix[13], matrix[14]
 
     GEO_START = 95
 
-    # vertices section
     pos = _scan_section(data, b"vertices\x00", GEO_START)
     v_count = struct.unpack_from("<i", data, pos)[0]
     pos += 4
     raw_verts = struct.unpack_from(f"<{v_count * 3}f", data, pos)
     pos += v_count * 3 * 4
 
-    # Apply coordinate transform matching Scene.tsx parseAareasBinary + Rx(-90°) group rotation:
-    #   Step 1 (Scene.tsx):  vx=(m12+rx)*s,  vy=(-m14+ry)*s,  vz=(m13+rz)*s
-    #   Step 2 (Rx -90°):    X=vx,  Y=vz,  Z=-vy
-    #   Combined:
-    #     three.X = (m12 + rx) * s
-    #     three.Y = (m13 + rz) * s   ← matrix[13] + Z-vertex (height)
-    #     three.Z = (m14 - ry) * s   ← matrix[14] - Y-vertex (depth, negated)
-    m12, m13, m14 = matrix[12], matrix[13], matrix[14]
+    # Coordinate transform: Scene.tsx parseAareasBinary + Rx(-90°) group rotation
     vertices = []
     for i in range(v_count):
         rx = raw_verts[i * 3]
@@ -124,7 +122,6 @@ def parse_mesh(data: bytes) -> dict:
             (m14 - ry) * transform,
         ])
 
-    # normals section
     pos = _scan_section(data, b"normals\x00", pos)
     n_count = struct.unpack_from("<i", data, pos)[0]
     pos += 4
@@ -132,21 +129,17 @@ def parse_mesh(data: bytes) -> dict:
     pos += n_count * 3 * 4
     normals = [list(raw_norms[i * 3:i * 3 + 3]) for i in range(n_count)]
 
-    # colors section
     pos = _scan_section(data, b"colors\x00", pos)
     c_count = struct.unpack_from("<i", data, pos)[0]
-    pos += 4 + c_count * 3 * 4  # skip color data
+    pos += 4 + c_count * 3 * 4
 
-    # Count actual UV sections and skip their data.
-    # Format: "uvs\x00" (4 bytes) + channel_idx (1 byte) + count (int32) + count×2×float32
-    # stride = 8 + 3 × actual_uv_sections  (0→8, 1→11, 2→14)
     actual_uv_count = 0
     while True:
         uvs_idx = data.find(b"uvs\x00", pos)
         faces_idx = data.find(b"faces\x00", pos)
         if uvs_idx == -1 or (faces_idx != -1 and faces_idx <= uvs_idx):
             break
-        uv_data_pos = uvs_idx + 4 + 1  # skip label + channel_idx byte
+        uv_data_pos = uvs_idx + 4 + 1
         uv_count = struct.unpack_from("<i", data, uv_data_pos)[0]
         pos = uv_data_pos + 4 + uv_count * 2 * 4
         actual_uv_count += 1
@@ -154,8 +147,6 @@ def parse_mesh(data: bytes) -> dict:
     pos = _scan_section(data, b"faces\x00", pos)
     faces_count = struct.unpack_from("<i", data, pos)[0]
     pos += 4
-
-    # stride: type(1) + v0,v1,v2(3) + uv_indices(3×actual_uv) + fn(1) + vn0,vn1,vn2(3)
     stride = 8 + 3 * actual_uv_count
     total_ints = faces_count * stride
 
@@ -166,8 +157,6 @@ def parse_mesh(data: bytes) -> dict:
         )
 
     raw_faces = struct.unpack_from(f"<{total_ints}i", data, pos)
-
-    # Vertex indices are always at positions [base+1], [base+2], [base+3]
     faces = []
     for i in range(faces_count):
         base = i * stride
@@ -182,16 +171,28 @@ def parse_mesh(data: bytes) -> dict:
     }
 
 
-# ── API routes ────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _is_valid_scene_name(name: str) -> bool:
-    """Keep only scenes whose name starts with a 4-digit number in [4000, 8000]."""
     m = re.match(r'^(\d{4})', name or '')
     if not m:
         return False
     n = int(m.group(1))
     return 4000 <= n <= 8000
 
+
+def _load_corrections(scene_id: int) -> dict:
+    """Return {mesh_file_lower: {corrected_tag, note}} from local DB."""
+    ldb = get_local_db()
+    rows = ldb.execute(
+        "SELECT mesh_file, corrected_tag, note FROM tag_corrections WHERE scene_id=?",
+        (scene_id,)
+    ).fetchall()
+    ldb.close()
+    return {r["mesh_file"].strip().lower(): dict(r) for r in rows}
+
+
+# ── API routes ────────────────────────────────────────────────────────────────
 
 @app.get("/api/scenes")
 def list_scenes():
@@ -202,6 +203,19 @@ def list_scenes():
             if _is_valid_scene_name(r[1])]
     conn.close()
     return rows
+
+
+@app.get("/api/tags")
+def list_tags():
+    """Return all unique tag names from production DB, sorted."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT DISTINCT SurfaceName FROM Surfaces WHERE SurfaceName IS NOT NULL ORDER BY SurfaceName"
+    )
+    tags = [r[0] for r in cursor.fetchall() if r[0]]
+    conn.close()
+    return tags
 
 
 @app.get("/api/scene/{scene_id}")
@@ -242,24 +256,51 @@ def get_scene(scene_id: int):
 
     conn.close()
 
+    # Load local corrections
+    corrections = _load_corrections(scene_id)
+
     result = []
     for obj in objects:
         mesh_file = obj.get("Mesh", "")
         key = mesh_file.strip().lower()
         info = tag_map.get(key, {})
+        original_tag = info.get("tag") or ""
         full_path = mesh_dir / mesh_file
-        result.append(
-            {
-                "mesh_file": mesh_file,
-                "surface_name": info.get("surface_name") or "",
-                "tag": info.get("tag") or "",
-                "has_tag": bool(info.get("tag")),
-                "file_exists": full_path.exists(),
-            }
-        )
+
+        # Merge with local correction
+        if key in corrections:
+            c = corrections[key]
+            corrected_tag = c["corrected_tag"]  # None = excluded
+            excluded = corrected_tag is None
+            effective_tag = "" if excluded else corrected_tag
+            corrected = True
+        else:
+            corrected = False
+            excluded = False
+            effective_tag = original_tag
+
+        result.append({
+            "mesh_file": mesh_file,
+            "surface_name": info.get("surface_name") or "",
+            "tag": effective_tag,
+            "original_tag": original_tag,
+            "has_tag": bool(effective_tag),
+            "corrected": corrected,
+            "excluded": excluded,
+            "file_exists": full_path.exists(),
+        })
 
     tagged = sum(1 for m in result if m["has_tag"])
-    return {"scene_id": scene_id, "total": len(result), "tagged": tagged, "meshes": result}
+    corrected_count = sum(1 for m in result if m["corrected"])
+    excluded_count = sum(1 for m in result if m["excluded"])
+    return {
+        "scene_id": scene_id,
+        "total": len(result),
+        "tagged": tagged,
+        "corrected": corrected_count,
+        "excluded": excluded_count,
+        "meshes": result,
+    }
 
 
 @app.get("/api/mesh/{scene_id}/{mesh_file:path}")
@@ -284,6 +325,57 @@ def get_mesh(scene_id: int, mesh_file: str):
         return parse_mesh(raw)
     except Exception as e:
         raise HTTPException(500, f"Failed to parse mesh: {e}")
+
+
+# ── Tag correction endpoints ──────────────────────────────────────────────────
+
+class CorrectionRequest(BaseModel):
+    corrected_tag: Optional[str] = None   # None = exclude from training
+    note: Optional[str] = ""
+
+
+@app.post("/api/correction/{scene_id}/{mesh_file:path}")
+def set_correction(scene_id: int, mesh_file: str, body: CorrectionRequest):
+    """Upsert a tag correction (or exclusion) for a specific mesh."""
+    ldb = get_local_db()
+    ldb.execute(
+        """
+        INSERT INTO tag_corrections (scene_id, mesh_file, corrected_tag, note, updated_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(scene_id, mesh_file) DO UPDATE SET
+            corrected_tag = excluded.corrected_tag,
+            note          = excluded.note,
+            updated_at    = excluded.updated_at
+        """,
+        (scene_id, mesh_file.strip(), body.corrected_tag, body.note or "")
+    )
+    ldb.commit()
+    ldb.close()
+    return {"ok": True}
+
+
+@app.delete("/api/correction/{scene_id}/{mesh_file:path}")
+def delete_correction(scene_id: int, mesh_file: str):
+    """Remove a local correction — reverts to production DB tag."""
+    ldb = get_local_db()
+    ldb.execute(
+        "DELETE FROM tag_corrections WHERE scene_id=? AND mesh_file=?",
+        (scene_id, mesh_file.strip())
+    )
+    ldb.commit()
+    ldb.close()
+    return {"ok": True}
+
+
+@app.get("/api/corrections/export")
+def export_corrections():
+    """Export all corrections as JSON (for review / backup)."""
+    ldb = get_local_db()
+    rows = ldb.execute(
+        "SELECT scene_id, mesh_file, corrected_tag, note, updated_at FROM tag_corrections ORDER BY scene_id, mesh_file"
+    ).fetchall()
+    ldb.close()
+    return [dict(r) for r in rows]
 
 
 # ── Static files ──────────────────────────────────────────────────────────────
