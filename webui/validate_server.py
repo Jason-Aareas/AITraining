@@ -436,7 +436,12 @@ def batch_groups(q: str = ""):
         (search, search),
     ).fetchall()
     ldb.close()
-    return [dict(r) for r in rows]
+
+    # Exclude: cleared name is purely digits+"v" (e.g. "001v", "1v") with no tag — not enough info
+    _version_re = re.compile(r'^\d+[vV]$')
+    rows = [r for r in rows if not (_version_re.match(r['cname'] or '') and not r['eff_tag'])]
+
+    return rows
 
 
 class BatchFixRequest(BaseModel):
