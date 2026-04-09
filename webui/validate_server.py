@@ -42,12 +42,20 @@ LOCAL_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _cleared_name(mesh_file: str) -> str:
-    """SQLite UDF: strip trailing digits/underscores + extension.
-    'Crown13.js' → 'Crown', 'COUNTERTOP_0009_.js' → 'COUNTERTOP'
+    """SQLite UDF: strip trailing dimension/version suffixes + extension.
+    'Crown13.js'          → 'Crown'
+    'COUNTERTOP_0009_.js' → 'COUNTERTOP'
+    'CAB_DOOR_0001_17x25.js' → 'CAB_DOOR'
     """
     if not mesh_file:
         return ""
-    return re.sub(r'[_\d]+$', '', Path(mesh_file).stem)
+    stem = Path(mesh_file).stem
+    prev = None
+    while stem != prev:
+        prev = stem
+        stem = re.sub(r'_?\d+[xX]\d+$', '', stem)  # dimension suffix: _17x25 / 10X20
+        stem = re.sub(r'[_\d]+$', '', stem)          # trailing digits / underscores
+    return stem
 
 
 def get_local_db() -> sqlite3.Connection:
@@ -437,9 +445,12 @@ def batch_groups(q: str = ""):
     ).fetchall()
     ldb.close()
 
-    # Exclude: cleared name is purely digits+"v" (e.g. "001v", "1v") with no tag — not enough info
+    # Exclude: cleared name is purely digits+"v" (e.g. "001v", "1v") with no tag
     _version_re = re.compile(r'^\d+[vV]$')
     rows = [r for r in rows if not (_version_re.match(r['cname'] or '') and not r['eff_tag'])]
+
+    # Exclude: cleared name contains "spline" — handled separately, not a mesh category
+    rows = [r for r in rows if 'spline' not in (r['cname'] or '').lower()]
 
     return rows
 
