@@ -41,9 +41,17 @@ LOCAL_DB_PATH = Path(__file__).parent.parent / "data" / "training.db"
 LOCAL_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _cleared_name(mesh_file: str) -> str:
+    """SQLite UDF: strip trailing digits + extension. 'Crown13.js' → 'Crown'."""
+    if not mesh_file:
+        return ""
+    return re.sub(r'\d+$', '', Path(mesh_file).stem)
+
+
 def get_local_db() -> sqlite3.Connection:
     conn = sqlite3.connect(str(LOCAL_DB_PATH))
     conn.row_factory = sqlite3.Row
+    conn.create_function("cleared_name", 1, _cleared_name)
     return conn
 
 
@@ -398,6 +406,84 @@ def export_corrections():
     return [dict(r) for r in rows]
 
 
+# ── Batch tag fix endpoints ───────────────────────────────────────────────────
+
+@app.get("/api/batch-groups")
+def batch_groups(q: str = ""):
+    """
+    Return DISTINCT (cleared_name, effective_tag) groups across all scenes.
+    effective_tag = corrected_tag if correction exists, else original_tag.
+    Optional ?q= filters by cleared_name (case-insensitive substring).
+    """
+    ldb = get_local_db()
+    search = q.strip().lower()
+    rows = ldb.execute(
+        """
+        SELECT cleared_name(m.mesh_file)                       AS cname,
+               COALESCE(c.corrected_tag, m.original_tag)       AS eff_tag,
+               COUNT(*)                                         AS mesh_count,
+               COUNT(DISTINCT m.scene_id)                      AS scene_count
+        FROM   meshes m
+        LEFT JOIN tag_corrections c
+               ON c.scene_id = m.scene_id
+              AND LOWER(c.mesh_file) = LOWER(m.mesh_file)
+        WHERE  (? = '' OR LOWER(cleared_name(m.mesh_file)) LIKE '%'||?||'%')
+        GROUP BY cname, eff_tag
+        ORDER BY cname, eff_tag NULLS LAST
+        """,
+        (search, search),
+    ).fetchall()
+    ldb.close()
+    return [dict(r) for r in rows]
+
+
+class BatchFixRequest(BaseModel):
+    cleared_name: str
+    new_tag: Optional[str] = None   # None = exclude from training
+
+
+@app.post("/api/batch-fix")
+def batch_fix(body: BatchFixRequest):
+    """
+    Set tag for ALL meshes whose cleared_name matches body.cleared_name.
+    - new_tag == original_tag  → delete correction (revert to DB)
+    - new_tag != original_tag  → upsert correction
+    - new_tag is None          → upsert exclusion
+    """
+    ldb = get_local_db()
+    rows = ldb.execute(
+        "SELECT scene_id, mesh_file, original_tag FROM meshes WHERE cleared_name(mesh_file) = ?",
+        (body.cleared_name,),
+    ).fetchall()
+
+    updated = 0
+    for row in rows:
+        sid, mf, orig = row["scene_id"], row["mesh_file"], row["original_tag"]
+        if body.new_tag is not None and body.new_tag == orig:
+            # Revert: remove any existing correction
+            ldb.execute(
+                "DELETE FROM tag_corrections WHERE scene_id=? AND mesh_file=?",
+                (sid, mf),
+            )
+        else:
+            ldb.execute(
+                """
+                INSERT INTO tag_corrections (scene_id, mesh_file, corrected_tag, note, updated_at)
+                VALUES (?, ?, ?, 'batch fix', datetime('now'))
+                ON CONFLICT(scene_id, mesh_file) DO UPDATE SET
+                    corrected_tag = excluded.corrected_tag,
+                    note          = excluded.note,
+                    updated_at    = excluded.updated_at
+                """,
+                (sid, mf, body.new_tag),
+            )
+        updated += 1
+
+    ldb.commit()
+    ldb.close()
+    return {"ok": True, "updated": updated}
+
+
 # ── Static files ──────────────────────────────────────────────────────────────
 
 static_dir = Path(__file__).parent / "static"
@@ -407,3 +493,8 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 @app.get("/")
 def index():
     return FileResponse(str(static_dir / "validate.html"))
+
+
+@app.get("/batch")
+def batch_page():
+    return FileResponse(str(static_dir / "batch.html"))

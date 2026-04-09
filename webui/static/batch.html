@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Batch Tag Fix</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #1a1a1a; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; }
+
+  header {
+    background: #2a2a2a; padding: 10px 16px; border-bottom: 1px solid #444;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap; position: sticky; top: 0; z-index: 100;
+  }
+  header a { color: #90caf9; font-size: 13px; text-decoration: none; white-space: nowrap; }
+  header a:hover { text-decoration: underline; }
+  header h1 { font-size: 15px; color: #e0e0e0; white-space: nowrap; }
+  #search-box {
+    background: #333; color: #e0e0e0; border: 1px solid #555;
+    padding: 5px 10px; border-radius: 4px; font-size: 13px; width: 220px; outline: none;
+  }
+  #search-box:focus { border-color: #90caf9; }
+  #stats { font-size: 12px; color: #aaa; margin-left: auto; white-space: nowrap; }
+  #error-bar { background: #5a1a1a; color: #ff8a80; padding: 5px 16px; font-size: 12px; display: none; }
+
+  /* legend */
+  #legend { display: flex; gap: 14px; padding: 6px 16px; font-size: 11px; color: #666; border-bottom: 1px solid #2a2a2a; background: #1e1e1e; }
+  .leg { display: flex; align-items: center; gap: 5px; }
+  .leg-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* table */
+  .table-wrap { flex: 1; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead th {
+    background: #252525; color: #888; font-weight: normal; text-align: left;
+    padding: 7px 10px; border-bottom: 2px solid #333; position: sticky; top: 47px; z-index: 50;
+  }
+  tbody tr { border-bottom: 1px solid #242424; }
+  tbody tr:hover { background: #222; }
+  tbody tr.group-first td { border-top: 1px solid #333; }
+  td { padding: 5px 10px; vertical-align: middle; }
+
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: middle; flex-shrink: 0; }
+  .dot.tagged    { background: #4caf50; }
+  .dot.corrected { background: #ffc107; }
+  .dot.excluded  { background: #f44336; }
+  .dot.untagged  { background: #555; }
+
+  .cname-cell { font-weight: bold; color: #ccc; white-space: nowrap; }
+  .cname-repeat { color: transparent; }  /* same group, hide repeated name */
+  .tag-cell { color: #81c784; }
+  .tag-cell.untagged { color: #555; font-style: italic; }
+  .tag-cell.corrected { color: #ffc107; }
+  .tag-cell.excluded  { color: #f44336; font-style: italic; text-decoration: line-through; }
+  .count-cell { color: #aaa; text-align: right; }
+
+  /* edit cell */
+  .edit-btn {
+    background: none; border: 1px solid #444; color: #888;
+    padding: 2px 8px; border-radius: 3px; cursor: pointer; font-size: 11px;
+  }
+  .edit-btn:hover { border-color: #90caf9; color: #90caf9; background: #1a2a3a; }
+
+  /* inline edit row */
+  .inline-edit { display: flex; gap: 6px; align-items: center; }
+  .tag-search-inline {
+    background: #333; color: #e0e0e0; border: 1px solid #555;
+    padding: 4px 7px; border-radius: 4px; font-size: 12px; width: 180px; outline: none;
+  }
+  .tag-search-inline:focus { border-color: #90caf9; }
+  .tag-dropdown-inline {
+    position: absolute; z-index: 200; background: #1e1e1e; border: 1px solid #444;
+    border-radius: 4px; max-height: 200px; overflow-y: auto; width: 220px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
+  .topt { padding: 5px 9px; cursor: pointer; font-size: 12px; }
+  .topt:hover, .topt.active { background: #1565c0; color: #fff; }
+  .topt.special { color: #f44336; font-style: italic; }
+  .topt.special:hover { background: #5a1a1a; color: #ff8a80; }
+  .topt.reset { color: #81c784; }
+  .topt.reset:hover { background: #1a3a1a; }
+  .btn-save   { background: #1565c0; color: #fff; border: none; padding: 3px 10px; border-radius: 3px; cursor: pointer; font-size: 12px; }
+  .btn-cancel { background: #444;    color: #ccc; border: none; padding: 3px 10px; border-radius: 3px; cursor: pointer; font-size: 12px; }
+  .btn-save:hover   { background: #1976d2; }
+  .btn-cancel:hover { background: #555; }
+
+  /* loading */
+  #loading { text-align: center; padding: 40px; color: #555; font-size: 14px; }
+
+  /* confirm toast */
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #2a4a2a; color: #81c784; border: 1px solid #4caf50;
+    padding: 8px 20px; border-radius: 6px; font-size: 13px; display: none; z-index: 500;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <a href="/">&#8592; Validator</a>
+  <h1>Batch Tag Fix</h1>
+  <input id="search-box" type="text" placeholder="Search cleared name..." autocomplete="off">
+  <span id="stats"></span>
+</header>
+<div id="error-bar"></div>
+<div id="legend">
+  <span class="leg"><span class="leg-dot tagged"></span>Tagged (DB)</span>
+  <span class="leg"><span class="leg-dot corrected"></span>Corrected</span>
+  <span class="leg"><span class="leg-dot excluded"></span>Excluded</span>
+  <span class="leg"><span class="leg-dot untagged"></span>No tag</span>
+</div>
+
+<div class="table-wrap">
+  <div id="loading">Loading...</div>
+  <table id="main-table" style="display:none">
+    <thead>
+      <tr>
+        <th style="width:200px">Cleared Name</th>
+        <th>Current Tag</th>
+        <th style="width:80px;text-align:right">Meshes</th>
+        <th style="width:80px;text-align:right">Scenes</th>
+        <th style="width:90px"></th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<div id="toast"></div>
+
+<script>
+let allGroups = [];   // raw data from API
+let allTags   = [];   // all tag names
+let editRow   = null; // currently open edit row element
+
+// ── Load data ────────────────────────────────────────────────────────────────
+Promise.all([
+  fetch('/api/batch-groups').then(r => r.json()),
+  fetch('/api/tags').then(r => r.json()),
+]).then(([groups, tags]) => {
+  allGroups = groups;
+  allTags   = tags;
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('main-table').style.display = '';
+  render(allGroups);
+}).catch(err => {
+  document.getElementById('error-bar').textContent = 'Failed to load: ' + err.message;
+  document.getElementById('error-bar').style.display = 'block';
+  document.getElementById('loading').style.display = 'none';
+});
+
+// ── Search ───────────────────────────────────────────────────────────────────
+document.getElementById('search-box').addEventListener('input', function() {
+  const q = this.value.trim().toLowerCase();
+  const filtered = q ? allGroups.filter(g => g.cname.toLowerCase().includes(q)) : allGroups;
+  render(filtered);
+});
+
+// ── Render table ─────────────────────────────────────────────────────────────
+function dotClass(row) {
+  if (row.eff_tag === null && row._has_correction) return 'excluded';
+  if (row._has_correction) return 'corrected';
+  if (row.eff_tag)         return 'tagged';
+  return 'untagged';
+}
+
+function tagCellClass(row) {
+  if (!row.eff_tag && !row._has_correction) return 'tag-cell untagged';
+  if (row._has_correction && !row.eff_tag)  return 'tag-cell excluded';
+  if (row._has_correction)                  return 'tag-cell corrected';
+  return 'tag-cell';
+}
+
+function tagDisplay(row) {
+  if (!row.eff_tag && !row._has_correction) return '(no tag)';
+  if (row._has_correction && !row.eff_tag)  return 'excluded';
+  return row.eff_tag;
+}
+
+function render(groups) {
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+  editRow = null;
+
+  document.getElementById('stats').textContent =
+    groups.length + ' groups · ' + groups.reduce((s, g) => s + g.mesh_count, 0) + ' meshes';
+
+  let prevCname = null;
+  groups.forEach((g, idx) => {
+    const tr = document.createElement('tr');
+    const isFirstInGroup = g.cname !== prevCname;
+    if (isFirstInGroup) tr.classList.add('group-first');
+    prevCname = g.cname;
+
+    const dc = dotClass(g);
+    const tc = tagCellClass(g);
+    const td = tagDisplay(g);
+    const cnameHtml = isFirstInGroup
+      ? `<span class="cname-cell">${esc(g.cname)}</span>`
+      : `<span class="cname-repeat">${esc(g.cname)}</span>`;
+
+    tr.innerHTML = `
+      <td>${cnameHtml}</td>
+      <td class="${tc}"><span class="dot ${dc}"></span>${esc(td)}</td>
+      <td class="count-cell">${g.mesh_count}</td>
+      <td class="count-cell">${g.scene_count}</td>
+      <td><button class="edit-btn" data-idx="${idx}">Edit</button></td>
+    `;
+    tr.dataset.idx = idx;
+    tr.dataset.cname = g.cname;
+    tbody.appendChild(tr);
+  });
+
+  tbody.addEventListener('click', onEditClick, { once: false });
+}
+
+function onEditClick(e) {
+  const btn = e.target.closest('.edit-btn');
+  if (!btn) return;
+  const idx = parseInt(btn.dataset.idx);
+  openEdit(idx);
+}
+
+// ── Inline edit ───────────────────────────────────────────────────────────────
+function openEdit(idx) {
+  // Close any existing edit
+  if (editRow) closeEdit(false);
+
+  const group = allGroups[idx];   // use allGroups for index stability
+  const tbody = document.getElementById('tbody');
+  const tr = tbody.querySelector(`tr[data-idx="${idx}"]`);
+  if (!tr) return;
+
+  editRow = tr;
+  const tagCell = tr.children[1];
+  const btnCell = tr.children[4];
+
+  // Build inline editor
+  const wrap = document.createElement('div');
+  wrap.className = 'inline-edit';
+  wrap.style.position = 'relative';
+
+  const input = document.createElement('input');
+  input.className = 'tag-search-inline';
+  input.type = 'text';
+  input.value = group.eff_tag || '';
+  input.placeholder = 'Search tags...';
+
+  const dd = document.createElement('div');
+  dd.className = 'tag-dropdown-inline';
+
+  wrap.appendChild(input);
+  wrap.appendChild(dd);
+
+  let selected = group.eff_tag;   // current value
+
+  function renderDD(filter) {
+    dd.innerHTML = '';
+    const q = filter.trim().toLowerCase();
+
+    // Special: exclude
+    if (!q || 'exclude'.includes(q)) {
+      addOpt(dd, '— Exclude from training —', 'special', () => { selected = null; input.value = ''; renderDD(''); });
+    }
+    // Special: reset to original DB tag (only if there's a correction)
+    if (group._has_correction) {
+      addOpt(dd, '↩ Reset to DB tag', 'reset', () => { selected = '__reset__'; input.value = '(reset)'; renderDD(''); });
+    }
+
+    const hits = q ? allTags.filter(t => t.toLowerCase().includes(q)) : allTags;
+    hits.slice(0, 60).forEach(tag => {
+      addOpt(dd, tag, tag === selected ? 'active' : '', () => {
+        selected = tag; input.value = tag; renderDD(tag);
+      });
+    });
+  }
+
+  function addOpt(parent, text, cls, onClick) {
+    const div = document.createElement('div');
+    div.className = 'topt ' + cls;
+    div.textContent = text;
+    div.addEventListener('mousedown', e => { e.preventDefault(); onClick(); });
+    parent.appendChild(div);
+  }
+
+  input.addEventListener('input', () => { selected = input.value || null; renderDD(input.value); });
+  input.addEventListener('focus', () => renderDD(input.value));
+  input.addEventListener('blur',  () => { setTimeout(() => { dd.innerHTML = ''; }, 150); });
+
+  renderDD('');
+
+  const saveBtn   = document.createElement('button');
+  saveBtn.className = 'btn-save';
+  saveBtn.textContent = 'Save';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn-cancel';
+  cancelBtn.textContent = 'Cancel';
+
+  wrap.appendChild(saveBtn);
+  wrap.appendChild(cancelBtn);
+
+  tagCell.innerHTML = '';
+  tagCell.appendChild(wrap);
+  btnCell.innerHTML = '';
+  input.focus();
+
+  // Total meshes for this cleared name
+  const totalMeshes = allGroups
+    .filter(g => g.cname === group.cname)
+    .reduce((s, g) => s + g.mesh_count, 0);
+  const totalScenes = new Set(
+    allGroups.filter(g => g.cname === group.cname).map(g => g.scene_count)
+  ).size;
+
+  saveBtn.addEventListener('click', async () => {
+    if (selected === undefined || selected === group.eff_tag) { closeEdit(false); return; }
+
+    const newTag = selected === '__reset__' ? group._orig_tag : (selected || null);
+    const msg = selected === null
+      ? `Exclude ALL ${totalMeshes} meshes named "${group.cname}"?`
+      : selected === '__reset__'
+        ? `Reset ALL ${totalMeshes} meshes named "${group.cname}" to DB tag?`
+        : `Set "${newTag}" on ALL ${totalMeshes} meshes named "${group.cname}" across all scenes?`;
+
+    if (!confirm(msg)) return;
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+
+    const resp = await fetch('/api/batch-fix', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cleared_name: group.cname, new_tag: newTag }),
+    });
+    const result = await resp.json();
+    showToast('Updated ' + result.updated + ' meshes for "' + group.cname + '"');
+
+    // Refresh rows for this cleared name from server
+    const r2 = await fetch('/api/batch-groups?q=' + encodeURIComponent(group.cname));
+    const fresh = await r2.json();
+    const exact = fresh.filter(g => g.cname === group.cname);
+
+    // Replace in allGroups
+    const firstIdx = allGroups.findIndex(g => g.cname === group.cname);
+    const lastIdx  = allGroups.findLastIndex(g => g.cname === group.cname);
+    allGroups.splice(firstIdx, lastIdx - firstIdx + 1, ...exact);
+
+    // Re-render (preserving search filter)
+    const q = document.getElementById('search-box').value.trim().toLowerCase();
+    const filtered = q ? allGroups.filter(g => g.cname.toLowerCase().includes(q)) : allGroups;
+    render(filtered);
+  });
+
+  cancelBtn.addEventListener('click', () => closeEdit(false));
+}
+
+function closeEdit(rerender) {
+  editRow = null;
+  if (rerender) {
+    const q = document.getElementById('search-box').value.trim().toLowerCase();
+    const filtered = q ? allGroups.filter(g => g.cname.toLowerCase().includes(q)) : allGroups;
+    render(filtered);
+  }
+}
+
+function esc(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 3000);
+}
+</script>
+</body>
+</html>
